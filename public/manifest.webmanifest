@@ -1,0 +1,17 @@
+{
+  "name": "MyPerks — benefits that fit your life",
+  "short_name": "MyPerks",
+  "description": "Discover and use your company benefits through the moments of your day.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#faf6f0",
+  "theme_color": "#ff6a4d",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
