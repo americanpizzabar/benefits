@@ -1,7 +1,7 @@
 import { getTranslations, setRequestLocale } from "next-intl/server";
 import { redirect } from "@/i18n/navigation";
 import { getUser, getProfile } from "@/lib/data";
-import { createClient } from "@/lib/supabase/server";
+import { sql } from "@/lib/db";
 import { PageHeader } from "@/components/PageHeader";
 import { AdminUpload, type AdminDoc } from "@/components/AdminUpload";
 
@@ -30,34 +30,33 @@ export default async function AdminPage({
     );
   }
 
-  const supabase = await createClient();
-  const { data: docRows } = await supabase
-    .from("benefit_documents")
-    .select("id, filename, status, error")
-    .order("created_at", { ascending: false });
+  const docRows = (await sql`
+    select d.id, d.filename, d.status, d.error,
+           count(b.id)::int as count
+    from benefit_documents d
+    left join benefits b on b.document_id = d.id
+    group by d.id
+    order by d.created_at desc
+  `) as {
+    id: string;
+    filename: string | null;
+    status: string;
+    error: string | null;
+    count: number;
+  }[];
 
-  // Count parsed benefits per document.
-  const { data: benefitRows } = await supabase
-    .from("benefits")
-    .select("document_id");
-  const counts = new Map<string, number>();
-  for (const b of benefitRows ?? []) {
-    if (b.document_id)
-      counts.set(b.document_id, (counts.get(b.document_id) ?? 0) + 1);
-  }
-
-  const docs: AdminDoc[] = (docRows ?? []).map((d) => ({
+  const docs: AdminDoc[] = docRows.map((d) => ({
     id: d.id,
     filename: d.filename,
     status: d.status,
     error: d.error,
-    count: counts.get(d.id) ?? 0,
+    count: d.count,
   }));
 
   return (
     <main>
       <PageHeader title={t("title")} backHref="/profile" />
-      <AdminUpload userId={user!.id} docs={docs} />
+      <AdminUpload docs={docs} />
     </main>
   );
 }

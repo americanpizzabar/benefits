@@ -1,10 +1,17 @@
 import { getTranslations, setRequestLocale } from "next-intl/server";
 import { redirect } from "@/i18n/navigation";
 import { getUser } from "@/lib/data";
-import { createClient } from "@/lib/supabase/server";
+import { sql } from "@/lib/db";
 import { formatJPY } from "@/lib/currency";
 import { SCENE_META, type Scene } from "@/lib/scenes";
 import { SavedCounter } from "@/components/SavedCounter";
+
+type Entry = {
+  amount_saved: number;
+  used_at: string;
+  title: string | null;
+  scene: Scene | null;
+};
 
 export default async function TrackerPage({
   params,
@@ -18,15 +25,15 @@ export default async function TrackerPage({
   if (!user) redirect({ href: "/sign-in", locale });
 
   const t = await getTranslations("Tracker");
-  const supabase = await createClient();
 
-  const { data: logs } = await supabase
-    .from("savings_log")
-    .select("amount_saved, used_at, benefits(title, scene)")
-    .eq("user_id", user!.id)
-    .order("used_at", { ascending: false });
+  const entries = (await sql`
+    select s.amount_saved::float as amount_saved, s.used_at,
+           b.title as title, b.scene as scene
+    from savings_log s join benefits b on b.id = s.benefit_id
+    where s.user_id = ${user!.id}
+    order by s.used_at desc
+  `) as Entry[];
 
-  const entries = logs ?? [];
   const now = new Date();
   const monthSaved = entries
     .filter((e) => {
@@ -59,15 +66,18 @@ export default async function TrackerPage({
   }
   const maxMonth = Math.max(1, ...months.map((m) => m.total));
 
-  const { data: allBadges } = await supabase
-    .from("badges")
-    .select("*")
-    .order("sort_order");
-  const { data: userBadges } = await supabase
-    .from("user_badges")
-    .select("badge_code")
-    .eq("user_id", user!.id);
-  const unlocked = new Set((userBadges ?? []).map((b) => b.badge_code));
+  const allBadges = (await sql`
+    select code, name, description, icon, criteria, sort_order
+    from badges order by sort_order
+  `) as {
+    code: string;
+    name: string;
+    icon: string | null;
+  }[];
+  const userBadges = (await sql`
+    select badge_code from user_badges where user_id = ${user!.id}
+  `) as { badge_code: string }[];
+  const unlocked = new Set(userBadges.map((b) => b.badge_code));
 
   return (
     <main className="px-4 pt-6">
@@ -105,7 +115,7 @@ export default async function TrackerPage({
       <section className="mt-6">
         <h2 className="mb-2 text-sm font-semibold text-muted">{t("badges")}</h2>
         <div className="grid grid-cols-3 gap-3">
-          {(allBadges ?? []).map((badge) => {
+          {allBadges.map((badge) => {
             const has = unlocked.has(badge.code);
             return (
               <div
@@ -135,33 +145,24 @@ export default async function TrackerPage({
           <p className="text-sm text-muted">{t("noActivity")}</p>
         ) : (
           <div className="space-y-2">
-            {entries.slice(0, 12).map((e, i) => {
-              const benefit = e.benefits as {
-                title: string;
-                scene: Scene;
-              } | null;
-              return (
-                <div
-                  key={i}
-                  className="card flex items-center gap-3 p-3"
-                >
-                  <span className="text-xl">
-                    {benefit ? SCENE_META[benefit.scene].emoji : "✨"}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">
-                      {benefit?.title ?? "—"}
-                    </p>
-                    <p className="text-xs text-muted">
-                      {new Date(e.used_at).toLocaleDateString(locale)}
-                    </p>
-                  </div>
-                  <span className="text-sm font-semibold text-brand-ink">
-                    +{formatJPY(e.amount_saved)}
-                  </span>
+            {entries.slice(0, 12).map((e, i) => (
+              <div key={i} className="card flex items-center gap-3 p-3">
+                <span className="text-xl">
+                  {e.scene ? SCENE_META[e.scene].emoji : "✨"}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium">
+                    {e.title ?? "—"}
+                  </p>
+                  <p className="text-xs text-muted">
+                    {new Date(e.used_at).toLocaleDateString(locale)}
+                  </p>
                 </div>
-              );
-            })}
+                <span className="text-sm font-semibold text-brand-ink">
+                  +{formatJPY(e.amount_saved)}
+                </span>
+              </div>
+            ))}
           </div>
         )}
       </section>

@@ -1,7 +1,7 @@
 import { getTranslations, setRequestLocale } from "next-intl/server";
 import { redirect, Link } from "@/i18n/navigation";
 import { getUser, getProfile } from "@/lib/data";
-import { createClient } from "@/lib/supabase/server";
+import { sql } from "@/lib/db";
 import { formatJPY } from "@/lib/currency";
 import { LocaleSwitch } from "@/components/LocaleSwitch";
 import { CurrencySelect, SignOutButton } from "@/components/ProfileSettings";
@@ -21,12 +21,11 @@ export default async function ProfilePage({
   const t = await getTranslations("Profile");
   const tw = await getTranslations("Wallet");
 
-  const supabase = await createClient();
-  const { data: logs } = await supabase
-    .from("savings_log")
-    .select("amount_saved")
-    .eq("user_id", user!.id);
-  const totalSaved = (logs ?? []).reduce((s, e) => s + e.amount_saved, 0);
+  const totals = (await sql`
+    select coalesce(sum(amount_saved), 0)::float as total
+    from savings_log where user_id = ${user!.id}
+  `) as { total: number }[];
+  const totalSaved = totals[0]?.total ?? 0;
 
   return (
     <main className="px-4 pt-6">

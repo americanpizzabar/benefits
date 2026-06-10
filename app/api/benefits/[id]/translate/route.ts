@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { auth } from "@/auth";
+import { sql } from "@/lib/db";
 import { translateBenefit } from "@/lib/ai/anthropic";
 import { routing } from "@/i18n/routing";
 
@@ -16,23 +17,25 @@ export async function POST(
 ) {
   const { id } = await params;
   const target = new URL(req.url).searchParams.get("locale") ?? "";
-  const supabase = await createClient();
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return NextResponse.json({ error: "auth" }, { status: 401 });
+  const session = await auth();
+  if (!session?.user?.id)
+    return NextResponse.json({ error: "auth" }, { status: 401 });
 
   if (!routing.locales.includes(target as (typeof routing.locales)[number]))
     return NextResponse.json({ error: "bad_locale" }, { status: 400 });
   if (!process.env.ANTHROPIC_API_KEY)
     return NextResponse.json({ error: "no_api_key" }, { status: 400 });
 
-  const { data: benefit } = await supabase
-    .from("benefits")
-    .select("*")
-    .eq("id", id)
-    .maybeSingle();
+  const rows = (await sql`
+    select title, action, details, base_locale from benefits where id = ${id} limit 1
+  `) as {
+    title: string;
+    action: string | null;
+    details: string | null;
+    base_locale: string;
+  }[];
+  const benefit = rows[0];
   if (!benefit) return NextResponse.json({ error: "not_found" }, { status: 404 });
   if (benefit.base_locale === target)
     return NextResponse.json({ ok: true, skipped: true });
@@ -42,17 +45,17 @@ export async function POST(
       { title: benefit.title, action: benefit.action, details: benefit.details },
       target,
     );
-    await supabase.from("benefit_translations").upsert(
-      {
-        benefit_id: id,
-        locale: target,
-        title: tr.title,
-        action: tr.action,
-        details: tr.details,
-        context_tip: tr.context_tip,
-      },
-      { onConflict: "benefit_id,locale" },
-    );
+    await sql`
+      insert into benefit_translations
+        (benefit_id, locale, title, action, details, context_tip)
+      values
+        (${id}, ${target}, ${tr.title}, ${tr.action}, ${tr.details}, ${tr.context_tip})
+      on conflict (benefit_id, locale) do update set
+        title = excluded.title,
+        action = excluded.action,
+        details = excluded.details,
+        context_tip = excluded.context_tip
+    `;
     return NextResponse.json({ ok: true });
   } catch (e) {
     const message = e instanceof Error ? e.message : "translate failed";

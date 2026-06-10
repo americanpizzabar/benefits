@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { getTranslations, setRequestLocale } from "next-intl/server";
 import { getBenefit, getProfile } from "@/lib/data";
-import { createClient } from "@/lib/supabase/server";
+import { sql } from "@/lib/db";
 import { estimateSaving } from "@/lib/savings";
 import { SCENE_META } from "@/lib/scenes";
 import { Link } from "@/i18n/navigation";
@@ -28,19 +28,24 @@ export default async function BenefitPage({
   const t = await getTranslations("Benefit");
   const meta = SCENE_META[benefit.scene];
 
-  const supabase = await createClient();
-  const { data: reviewRows } = await supabase
-    .from("reviews")
-    .select("id, rating, body, locale, translations")
-    .eq("benefit_id", id)
-    .order("created_at", { ascending: false });
+  const reviewRows = (await sql`
+    select id, rating, body, locale, translations
+    from reviews where benefit_id = ${id}
+    order by created_at desc
+  `) as {
+    id: string;
+    rating: number;
+    body: string;
+    locale: string;
+    translations: Record<string, string> | null;
+  }[];
 
-  const reviews: ReviewItem[] = (reviewRows ?? []).map((r) => ({
+  const reviews: ReviewItem[] = reviewRows.map((r) => ({
     id: r.id,
     rating: r.rating,
     body: r.body,
     locale: r.locale,
-    translations: (r.translations as Record<string, string>) ?? {},
+    translations: r.translations ?? {},
   }));
 
   return (

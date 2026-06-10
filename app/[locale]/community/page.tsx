@@ -1,7 +1,7 @@
 import { getTranslations, setRequestLocale } from "next-intl/server";
 import { redirect } from "@/i18n/navigation";
 import { getUser, listBenefits } from "@/lib/data";
-import { createClient } from "@/lib/supabase/server";
+import { sql } from "@/lib/db";
 import {
   CommunityView,
   type CommunityReview,
@@ -20,35 +20,45 @@ export default async function CommunityPage({
   if (!user) redirect({ href: "/sign-in", locale });
 
   const t = await getTranslations("Community");
-  const supabase = await createClient();
 
   const benefits = await listBenefits(locale);
   const titleById = new Map(benefits.map((b) => [b.id, b.title]));
 
-  const { data: reviewRows } = await supabase
-    .from("reviews")
-    .select("id, rating, body, locale, translations, benefit_id")
-    .order("created_at", { ascending: false })
-    .limit(30);
+  const reviewRows = (await sql`
+    select id, rating, body, locale, translations, benefit_id
+    from reviews order by created_at desc limit 30
+  `) as {
+    id: string;
+    rating: number;
+    body: string;
+    locale: string;
+    translations: Record<string, string> | null;
+    benefit_id: string;
+  }[];
 
-  const reviews: CommunityReview[] = (reviewRows ?? []).map((r) => ({
+  const reviews: CommunityReview[] = reviewRows.map((r) => ({
     id: r.id,
     rating: r.rating,
     body: r.body,
     locale: r.locale,
-    translations: (r.translations as Record<string, string>) ?? {},
+    translations: r.translations ?? {},
     benefitId: r.benefit_id,
     benefitTitle: titleById.get(r.benefit_id) ?? "—",
   }));
 
-  const { data: buddyRows } = await supabase
-    .from("buddy_posts")
-    .select("id, title, body, when_at, benefit_id")
-    .eq("status", "open")
-    .order("created_at", { ascending: false })
-    .limit(30);
+  const buddyRows = (await sql`
+    select id, title, body, when_at, benefit_id
+    from buddy_posts where status = 'open'
+    order by created_at desc limit 30
+  `) as {
+    id: string;
+    title: string;
+    body: string | null;
+    when_at: string | null;
+    benefit_id: string | null;
+  }[];
 
-  const buddyPosts: BuddyPost[] = (buddyRows ?? []).map((p) => ({
+  const buddyPosts: BuddyPost[] = buddyRows.map((p) => ({
     id: p.id,
     title: p.title,
     body: p.body,

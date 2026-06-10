@@ -3,7 +3,6 @@
 import { useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { useRouter } from "@/i18n/navigation";
-import { createClient } from "@/lib/supabase/client";
 
 export type AdminDoc = {
   id: string;
@@ -20,13 +19,7 @@ const STATUS_KEY: Record<string, string> = {
   failed: "statusFailed",
 };
 
-export function AdminUpload({
-  userId,
-  docs,
-}: {
-  userId: string;
-  docs: AdminDoc[];
-}) {
+export function AdminUpload({ docs }: { docs: AdminDoc[] }) {
   const t = useTranslations("Admin");
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -37,18 +30,13 @@ export function AdminUpload({
     const file = fileRef.current?.files?.[0];
     if (!file) return;
     setBusy("upload");
-    const supabase = createClient();
-    const path = `${userId}/${Date.now()}-${file.name}`;
-    const { error: upErr } = await supabase.storage
-      .from("benefit-pdfs")
-      .upload(path, file, { contentType: "application/pdf" });
-    if (!upErr) {
-      await supabase.from("benefit_documents").insert({
-        storage_path: path,
-        filename: file.name,
-        uploaded_by: userId,
-        status: "uploaded",
-      });
+    const fd = new FormData();
+    fd.set("file", file);
+    const res = await fetch("/api/documents/upload", {
+      method: "POST",
+      body: fd,
+    });
+    if (res.ok) {
       if (fileRef.current) fileRef.current.value = "";
       router.refresh();
     }

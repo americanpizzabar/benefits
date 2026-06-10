@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { auth } from "@/auth";
+import { sql } from "@/lib/db";
 import { parseBenefitsPdf } from "@/lib/ai/anthropic";
 
 export const runtime = "nodejs";
@@ -11,74 +12,61 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const supabase = await createClient();
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return NextResponse.json({ error: "auth" }, { status: 401 });
+  const session = await auth();
+  if (!session?.user?.id)
+    return NextResponse.json({ error: "auth" }, { status: 401 });
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("is_admin")
-    .eq("id", user.id)
-    .maybeSingle();
-  if (!profile?.is_admin)
+  const admin = (await sql`
+    select is_admin from users where id = ${session.user.id} limit 1
+  `) as { is_admin: boolean }[];
+  if (!admin[0]?.is_admin)
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
 
   if (!process.env.ANTHROPIC_API_KEY)
     return NextResponse.json({ error: "no_api_key" }, { status: 400 });
 
-  const { data: doc } = await supabase
-    .from("benefit_documents")
-    .select("*")
-    .eq("id", id)
-    .maybeSingle();
+  const docs = (await sql`
+    select id, storage_path from benefit_documents where id = ${id} limit 1
+  `) as { id: string; storage_path: string }[];
+  const doc = docs[0];
   if (!doc) return NextResponse.json({ error: "not_found" }, { status: 404 });
 
-  await supabase
-    .from("benefit_documents")
-    .update({ status: "parsing", error: null })
-    .eq("id", id);
+  await sql`
+    update benefit_documents set status = 'parsing', error = null where id = ${id}
+  `;
 
   try {
-    const { data: file, error: dlError } = await supabase.storage
-      .from("benefit-pdfs")
-      .download(doc.storage_path);
-    if (dlError || !file) throw new Error(dlError?.message ?? "download failed");
+    const res = await fetch(doc.storage_path);
+    if (!res.ok) throw new Error(`download failed (${res.status})`);
+    const base64 = Buffer.from(await res.arrayBuffer()).toString("base64");
 
-    const base64 = Buffer.from(await file.arrayBuffer()).toString("base64");
     const benefits = await parseBenefitsPdf(base64);
 
-    if (benefits.length > 0) {
-      await supabase.from("benefits").insert(
-        benefits.map((b) => ({
-          document_id: id,
-          scene: b.scene,
-          title: b.title,
-          action: b.action,
-          vendor: b.vendor,
-          amount: b.amount,
-          discount_pct: b.discount_pct,
-          details: b.details,
-          base_locale: "en",
-          published: true,
-        })),
-      );
+    for (const b of benefits) {
+      await sql`
+        insert into benefits
+          (document_id, scene, title, action, vendor, amount, discount_pct,
+           details, base_locale, published)
+        values
+          (${id}, ${b.scene}::scene, ${b.title}, ${b.action}, ${b.vendor},
+           ${b.amount}, ${b.discount_pct}, ${b.details}, 'en', true)
+      `;
     }
 
-    await supabase
-      .from("benefit_documents")
-      .update({ status: "parsed", parsed_at: new Date().toISOString() })
-      .eq("id", id);
+    await sql`
+      update benefit_documents
+      set status = 'parsed', parsed_at = now()
+      where id = ${id}
+    `;
 
     return NextResponse.json({ ok: true, count: benefits.length });
   } catch (e) {
     const message = e instanceof Error ? e.message : "parse failed";
-    await supabase
-      .from("benefit_documents")
-      .update({ status: "failed", error: message })
-      .eq("id", id);
+    await sql`
+      update benefit_documents set status = 'failed', error = ${message}
+      where id = ${id}
+    `;
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
