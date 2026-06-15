@@ -2,7 +2,7 @@ import { getTranslations, setRequestLocale } from "next-intl/server";
 import { redirect } from "@/i18n/navigation";
 import { getUser, listBenefits } from "@/lib/data";
 import { MapClient } from "@/components/MapClient";
-import type { MapPoint } from "@/components/LeafletMap";
+import type { MapPoint } from "@/components/GoogleMap";
 
 export default async function MapPage({
   params,

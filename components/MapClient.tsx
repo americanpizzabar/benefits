@@ -3,9 +3,9 @@
 import dynamic from "next/dynamic";
 import { useState } from "react";
 import { useTranslations } from "next-intl";
-import type { MapPoint } from "@/components/LeafletMap";
+import type { MapPoint } from "@/components/GoogleMap";
 
-const LeafletMap = dynamic(() => import("@/components/LeafletMap"), {
+const GoogleMap = dynamic(() => import("@/components/GoogleMap"), {
   ssr: false,
   loading: () => (
     <div className="grid h-full place-items-center bg-border/40 text-sm text-muted">
@@ -52,7 +52,7 @@ export function MapClient({
   return (
     <div>
       <div className="h-[62vh] overflow-hidden">
-        <LeafletMap points={points} center={center} />
+        <GoogleMap points={points} center={center} />
       </div>
       <div className="px-4 py-3">
         <button
